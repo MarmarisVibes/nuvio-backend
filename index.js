@@ -507,7 +507,7 @@ app.get(["/catalog/:type/:id.json", "/u/:token/catalog/:type/:id.json"], async (
         metas = await getRecommendationMetas(getFriendActivityRefs(db, token, "series"), 18, "series");
     }
 
-    if (!metas.length) metas = await getTrendingMetas(type, 10);
+    if (!metas.length && id.indexOf("trending") === 0) metas = await getTrendingMetas(type, 10);
     res.json({ metas: metas });
   } catch (e) {
     console.error("Catalog error:", e.message);

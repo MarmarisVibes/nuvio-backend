@@ -171,8 +171,9 @@ async function getTrendingMetas(type, limit) {
   return (d.results || []).slice(0, limit || 20).map(i => mapItem(type, i));
 }
 
-async function getRecommendationMetas(refs, limit, fallbackType) {
-  if (!refs.length) return getTrendingMetas(fallbackType, limit);
+/* v1.2 FIX: no more fake trending fallback inside recommendations */
+async function getRecommendationMetas(refs, limit) {
+  if (!refs.length) return [];
   const scores = new Map();
   for (const ref of refs.slice(0, 6)) {
     const t = ref.type === "series" ? "tv" : "movie";
@@ -185,12 +186,10 @@ async function getRecommendationMetas(refs, limit, fallbackType) {
       }
     } catch (e) { /* skip */ }
   }
-  const recs = Array.from(scores.values())
+  return Array.from(scores.values())
     .sort((a, b) => b.score - a.score)
     .slice(0, limit || 18)
     .map(x => mapItem(x.type, x.item));
-  if (!recs.length) return getTrendingMetas(fallbackType, limit);
-  return recs;
 }
 
 function getUserActivityRefs(db, token, type) {
@@ -261,7 +260,7 @@ function makeManifest(db, token, root) {
 
   return {
     id: u ? "nuvio_discover_" + u.token.slice(0, 10) : "nuvio_discover_public",
-    version: "1.1.0",
+    version: "1.2.0",
     name: u ? "Nuvio Discover+ • " + u.name : "Nuvio Discover+",
     description: "Personal library, friends sync, universes, episodes and similar options.",
     resources: ["catalog", "meta"],
@@ -285,7 +284,7 @@ function baseUrl(req) {
 }
 
 app.get("/", (req, res) => {
-  res.send('<h2>Nuvio Discover+ Backend v1.1</h2><p><a href="/setup">Create Profile</a></p>');
+  res.send('<h2>Nuvio Discover+ Backend v1.2</h2><p><a href="/setup">Create Profile</a></p>');
 });
 
 app.get("/configure", (req, res) => res.redirect("/setup"));
@@ -474,92 +473,4 @@ app.get(["/catalog/:type/:id.json", "/u/:token/catalog/:type/:id.json"], async (
     let metas = [];
 
     if (id === "trending_movies" && type === "movie") metas = await getTrendingMetas("movie", 20);
-    if (id === "trending_series" && type === "series") metas = await getTrendingMetas("series", 20);
-
-    if (u) {
-      if (id === "movie_continue" && type === "movie") {
-        let refs = refsFromItems(db.events.filter(e => e.token === token && e.type === "movie" && e.progress < 100));
-        if (!refs.length) refs = refsFromItems(db.events.filter(e => e.token === token && e.type === "movie"));
-        metas = await metasFromRefs(refs, 20, progressDecorator);
-      }
-      if (id === "series_continue" && type === "series") {
-        let refs = refsFromItems(db.events.filter(e => e.token === token && e.type === "series" && e.progress < 100));
-        if (!refs.length) refs = refsFromItems(db.events.filter(e => e.token === token && e.type === "series"));
-        metas = await metasFromRefs(refs, 20, progressDecorator);
-      }
-      if (id === "movie_recent" && type === "movie")
-        metas = await metasFromRefs(refsFromItems(db.events.filter(e => e.token === token && e.type === "movie")), 20, progressDecorator);
-      if (id === "series_recent" && type === "series")
-        metas = await metasFromRefs(refsFromItems(db.events.filter(e => e.token === token && e.type === "series")), 20, progressDecorator);
-      if (id === "movie_favorites" && type === "movie")
-        metas = await metasFromRefs(refsFromItems(db.favorites.filter(f => f.token === token && f.type === "movie")), 20);
-      if (id === "series_favorites" && type === "series")
-        metas = await metasFromRefs(refsFromItems(db.favorites.filter(f => f.token === token && f.type === "series")), 20);
-      if (id === "movie_for_you" && type === "movie")
-        metas = await getRecommendationMetas(getUserActivityRefs(db, token, "movie"), 18, "movie");
-      if (id === "series_for_you" && type === "series")
-        metas = await getRecommendationMetas(getUserActivityRefs(db, token, "series"), 18, "series");
-      if (id === "movie_friends_watching" && type === "movie") metas = await getFriendsWatchingMetas(db, token, "movie");
-      if (id === "series_friends_watching" && type === "series") metas = await getFriendsWatchingMetas(db, token, "series");
-      if (id === "movie_friends_recs" && type === "movie")
-        metas = await getRecommendationMetas(getFriendActivityRefs(db, token, "movie"), 18, "movie");
-      if (id === "movie_friends_recs" && type === "series")
-        metas = await getRecommendationMetas(getFriendActivityRefs(db, token, "series"), 18, "series");
-    }
-
-    if (!metas.length && id.indexOf("trending") === 0) metas = await getTrendingMetas(type, 10);
-    res.json({ metas: metas });
-  } catch (e) {
-    console.error("Catalog error:", e.message);
-    res.json({ metas: [] });
-  }
-});
-
-app.get(["/meta/:type/:id.json", "/u/:token/meta/:type/:id.json"], async (req, res) => {
-  try {
-    const { type, id } = req.params;
-    const resolved = await resolveId(type, id);
-    if (!resolved) return res.json({ meta: {} });
-    const tmdbType = resolved.type === "series" ? "tv" : "movie";
-
-    const details = await tmdbGet("/" + tmdbType + "/" + resolved.tmdbId, { append_to_response: "credits,videos" });
-    let meta = mapItem(resolved.type, details);
-    meta.genres = (details.genres || []).map(g => g.name);
-    meta.cast = (details.credits && details.credits.cast || []).slice(0, 8).map(c => c.name);
-    meta.trailers = (details.videos && details.videos.results || [])
-      .filter(v => v.site === "YouTube").slice(0, 3)
-      .map(v => ({ source: v.key, name: v.name, ytId: v.key }));
-
-    if (resolved.type === "series" && details.seasons) {
-      try {
-        const seasonData = await tmdbGet("/tv/" + resolved.tmdbId + "/season/1", {});
-        meta.videos = (seasonData.episodes || []).map(ep => ({
-          id: "tmdb:" + resolved.tmdbId + ":1:" + ep.episode_number,
-          title: ep.episode_number + ". " + ep.name,
-          season: 1, episode: ep.episode_number,
-          thumbnail: img(ep.still_path, "w300"),
-          overview: ep.overview || ""
-        }));
-      } catch (e) { meta.videos = []; }
-
-      const searchQuery = (details.name || "").split(":")[0];
-      try {
-        const sr = await tmdbGet("/search/tv", { query: searchQuery });
-        meta.universe = (sr.results || []).filter(r => r.id !== resolved.tmdbId).slice(0, 10)
-          .map(r => mapTv(r, { description: "Spin-off / Related" }));
-      } catch (e) { meta.universe = []; }
-    }
-
-    try {
-      const recs = await tmdbGet("/" + tmdbType + "/" + resolved.tmdbId + "/recommendations", { page: 1 });
-      meta.similar = (recs.results || []).slice(0, 10).map(r => mapItem(resolved.type, r));
-    } catch (e) { meta.similar = []; }
-
-    res.json({ meta: meta });
-  } catch (e) {
-    console.error("Meta error:", e.message);
-    res.json({ meta: {} });
-  }
-});
-
-app.listen(PORT, () => console.log("🚀 Nuvio Discover+ v1.1 running on port " + PORT));
+    if (id === "trending_series" && typ

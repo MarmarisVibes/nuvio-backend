@@ -171,7 +171,6 @@ async function getTrendingMetas(type, limit) {
   return (d.results || []).slice(0, limit || 20).map(i => mapItem(type, i));
 }
 
-/* v1.2 FIX: no more fake trending fallback inside recommendations */
 async function getRecommendationMetas(refs, limit) {
   if (!refs.length) return [];
   const scores = new Map();
@@ -253,16 +252,19 @@ function makeManifest(db, token, root) {
     );
   }
 
+  /* v1.3: SEARCH CATALOGS (fixes "No searchable catalogs") */
   catalogs.push(
+    { type: "movie", id: "search_movie", name: "🔍 Search Movies", extra: [{ name: "search", isRequired: true }] },
+    { type: "series", id: "search_series", name: "🔍 Search Series", extra: [{ name: "search", isRequired: true }] },
     { type: "movie", id: "trending_movies", name: "🔥 Trending Now" },
     { type: "series", id: "trending_series", name: "🔥 Trending Now" }
   );
 
   return {
     id: u ? "nuvio_discover_" + u.token.slice(0, 10) : "nuvio_discover_public",
-    version: "1.2.0",
+    version: "1.3.0",
     name: u ? "Nuvio Discover+ • " + u.name : "Nuvio Discover+",
-    description: "Personal library, friends sync, universes, episodes and similar options.",
+    description: "Personal library, friends sync, search, universes, episodes and similar options.",
     resources: ["catalog", "meta"],
     types: ["movie", "series"],
     idPrefixes: ["tmdb:", "tt"],
@@ -284,7 +286,7 @@ function baseUrl(req) {
 }
 
 app.get("/", (req, res) => {
-  res.send('<h2>Nuvio Discover+ Backend v1.2</h2><p><a href="/setup">Create Profile</a></p>');
+  res.send('<h2>Nuvio Discover+ Backend v1.3</h2><p><a href="/setup">Create Profile</a></p>');
 });
 
 app.get("/configure", (req, res) => res.redirect("/setup"));
@@ -468,9 +470,4 @@ app.get(["/catalog/:type/:id.json", "/u/:token/catalog/:type/:id.json"], async (
   try {
     const db = await loadDB();
     const token = req.params.token || null;
-    const { type, id } = req.params;
-    const u = token ? db.users[token] : null;
-    let metas = [];
-
-    if (id === "trending_movies" && type === "movie") metas = await getTrendingMetas("movie", 20);
-    if (id === "trending_series" && typ
+    con
